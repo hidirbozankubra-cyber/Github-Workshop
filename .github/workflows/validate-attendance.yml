@@ -78,16 +78,21 @@ jobs:
               exit 1
             fi
             
-            # Dosya ismi kontrolü (Opsiyonel: E-posta ile uyumlu mu?)
+            # Dosya ismi kontrolü
             FILENAME=$(basename "$file" .txt)
-            FILENAME=$(basename "$FILENAME" .md)
+            FILENAME=$(basename "$FILENAME" .md) # .md uzantısını da kabul edelim
             
-            # Öğrenci numarası dosya adında var mı? (Basit bir kontrol)
-            # Eğer dosya adı '210316011' ve e-posta '210316011@...' ise
-            if [[ "$CONTENT" != *"$FILENAME"* ]]; then
-               echo "⚠️ UYARI: Dosya ismi ile e-posta adresi uyuşmuyor gibi görünüyor."
-               echo "File: $FILENAME, Email: $CONTENT"
-               # Bunu error yapmıyoruz, sadece uyarı logluyoruz şimdilik
+            # E-postanın kullanıcı adı kısmını al ( @ işaretinden öncesi)
+            EMAIL_USER=$(echo "$CONTENT" | cut -d'@' -f1)
+            
+            # 3. KURAL: Dosya adı ile E-posta kullanıcısı BİREBİR aynı olmalı
+            # Örn: Dosya: 210316011.txt -> İçerik: 210316011@ogr.cbu.edu.tr
+            if [[ "$FILENAME" != "$EMAIL_USER" ]]; then
+               echo "❌ HATA: Dosya ismi ile e-posta adresi uyuşmuyor!"
+               echo "Dosya Adı: $FILENAME"
+               echo "E-posta Kullanıcısı: $EMAIL_USER"
+               echo "Lütfen dosya adınızı öğrenci numaranızla aynı yapın."
+               exit 1
             fi
             
             echo "✅ $file geçerli!"
@@ -146,6 +151,7 @@ jobs:
             1. \`attendance/\` klasörü içine **yeni bir dosya** oluşturun.
             2. Dosya adı öğrenci numaranız olsun (örn: \`210316011.txt\`).
             3. Dosya içeriğinde **sadece** e-posta adresiniz olsun.
+            4. **ÖNEMLİ:** Dosya adı ile e-posta adresindeki numara aynı olmalıdır!
 
             Format:
             \`ogrenci_no@ogr.cbu.edu.tr\`
