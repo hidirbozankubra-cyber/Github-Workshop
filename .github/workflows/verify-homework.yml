@@ -1,0 +1,168 @@
+name: C# Homework Tests
+
+on:
+  pull_request:
+    paths:
+      - 'homeworks/csharp-fundamentals/**'
+
+jobs:
+  test:
+    name: Validate & Test C# Submissions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Get Changed Files
+      id: changed-files
+      uses: tj-actions/changed-files@v41
+      with:
+        files: |
+          homeworks/csharp-fundamentals/**/submissions/*.cs
+
+    - name: Validate & Test
+      id: validate
+      run: |
+        # Get the first changed file
+        FILE="${{ steps.changed-files.outputs.all_changed_files }}"
+        
+        if [ -z "$FILE" ]; then
+          echo "No submission file found."
+          echo "error=No submission file found" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        # Only take the first file if multiple
+        FILE=$(echo "$FILE" | head -n 1)
+        echo "Processing file: $FILE"
+        
+        # Extract filename and path parts
+        FILENAME=$(basename "$FILE")
+        DIRNAME=$(dirname "$FILE")
+        PROBLEM_DIR=$(dirname "$DIRNAME")
+        PROBLEM_NAME=$(basename "$PROBLEM_DIR") # e.g., problem-1
+        
+        # Validate Filename Format: ProblemX_123456789.cs
+        if [[ ! "$FILENAME" =~ ^Problem[1-4]_[0-9]{9}\.cs$ ]]; then
+          echo "Invalid filename format."
+          echo "message=❌ **Hata:** Dosya adı formatı yanlış! Beklenen: \`ProblemX_OGRENCINO.cs\` (Örn: \`Problem1_210316011.cs\`)" >> $GITHUB_OUTPUT
+          echo "status=failure" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        STUDENT_NO=$(echo "$FILENAME" | grep -oP '\d{9}')
+        PROBLEM_NUM=$(echo "$FILENAME" | grep -oP 'Problem\d') # e.g., Problem1
+        # Extract number only for display logic (e.g., 1)
+        PROBLEM_INDEX=$(echo "$PROBLEM_NUM" | grep -oP '\d')
+        
+        echo "Student: $STUDENT_NO"
+        echo "Problem: $PROBLEM_NUM"
+        
+        # Determine strict problem directory matching
+        EXPECTED_DIR="problem-$PROBLEM_INDEX"
+        
+        if [[ "$PROBLEM_NAME" != "$EXPECTED_DIR" ]]; then
+           echo "Wrong directory."
+           echo "message=❌ **Hata:** Yanlış klasöre yükleme yapıldı! \`$PROBLEM_NUM\` dosyası \`$PROBLEM_NAME\` klasöründe olmamalı." >> $GITHUB_OUTPUT
+           echo "status=failure" >> $GITHUB_OUTPUT
+           exit 1
+        fi
+
+        # Find the test file
+        TEST_FILE="$PROBLEM_DIR/$PROBLEM_NUM.Tests.cs"
+        if [ ! -f "$TEST_FILE" ]; then
+           echo "Test file not found: $TEST_FILE"
+           echo "message=❌ **Hata:** Test dosyası bulunamadı." >> $GITHUB_OUTPUT
+           echo "status=failure" >> $GITHUB_OUTPUT
+           exit 1
+        fi
+        
+        # ------------------------------------------------------------------
+        # Dynamic Test Project Creation
+        # ------------------------------------------------------------------
+        echo "Creating temporary test project..."
+        mkdir -p TestProject
+        cd TestProject
+        dotnet new console --force
+        
+        # Copy submission logic
+        cp "../$FILE" .
+        
+        # Copy test logic (Main method is here)
+        cp "../$TEST_FILE" .
+        
+        # Remove default Program.cs to avoid entry point conflict/redundancy
+        rm Program.cs
+        
+        echo "Running tests..."
+        
+        # Run the console app
+        # Passing the submission filename as argument as required by Main()
+        dotnet run -- "$FILENAME" > test_output.txt 2>&1
+        TEST_EXIT_CODE=$?
+        
+        cat test_output.txt
+        
+        # Parse Score from Output
+        # Looking for: "║  TOPLAM PUAN        │  10.46 / 25.00 puan    ║"
+        SCORE=$(grep -oP "TOPLAM PUAN\s+│\s+\K[\d\.]+" test_output.txt || echo "0")
+        
+        # Clean up
+        cd ..
+        rm -rf TestProject
+
+        echo "Parsed Score: $SCORE"
+        
+        # Format output for PR comment (Markdown)
+        echo "message=### 📝 $PROBLEM_NUM Sonuçları - Öğrenci: $STUDENT_NO
+
+        | Durum | Puan |
+        |-------|------|
+        | $([ $TEST_EXIT_CODE -eq 0 ] && echo '✅ Geçti' || echo '❌ Kaldı') | **$SCORE / 25** |
+        
+        <details>
+        <summary>🔍 Test Detayları</summary>
+        
+        \`\`\`text
+        $(tail -n 25 TestProject/test_output.txt)
+        \`\`\`
+        
+        </details>
+        
+        TOPLAM SONUÇ: $SCORE / 100
+        Problem $PROBLEM_INDEX    $SCORE/25
+        " >> $GITHUB_OUTPUT
+
+        if [ $TEST_EXIT_CODE -eq 0 ]; then
+           echo "status=success" >> $GITHUB_OUTPUT
+        else
+           echo "status=failure" >> $GITHUB_OUTPUT
+           echo "exit_code=1" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Post Comment
+      uses: actions/github-script@v7
+      if: always() && steps.validate.outputs.message != ''
+      with:
+        script: |
+          const message = process.env.MESSAGE;
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: message
+          });
+      env:
+        MESSAGE: ${{ steps.validate.outputs.message }}
+
+    - name: Check Status
+      if: steps.validate.outputs.status == 'failure' || steps.validate.outputs.exit_code == '1'
+      run: exit 1
